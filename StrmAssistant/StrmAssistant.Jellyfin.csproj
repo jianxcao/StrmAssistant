@@ -1,0 +1,81 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- 升级到 .NET 8.0 以匹配 Jellyfin 10.10+ -->
+    <TargetFrameworks>net8.0</TargetFrameworks>
+    <AssemblyVersion>0.0.4.0</AssemblyVersion>
+    <FileVersion>0.0.4.0</FileVersion>
+    <CopyLocalLockFileAssemblies>True</CopyLocalLockFileAssemblies>
+    <IncludeSourceRevisionInInformationalVersion>true</IncludeSourceRevisionInInformationalVersion>
+    <LangVersion>latest</LangVersion>
+    <!-- 定义 JELLYFIN 条件编译符号，排除 Emby 专用代码 -->
+    <DefineConstants>JELLYFIN</DefineConstants>
+    <!-- 禁用默认的 Compile 项自动包含，手动控制编译文件 -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  
+  <!-- 仅编译 Jellyfin 相关文件 -->
+  <ItemGroup>
+    <Compile Include="Jellyfin\**\*.cs" />
+    <Compile Include="Common\LanguageUtility.cs" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <None Remove="Tokenizer\linux\libsimple.so" />
+    <None Remove="Tokenizer\win\libsimple.so" />
+    <None Remove="Web\Resources\strmassistant.js" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <EmbeddedResource Include="Jellyfin\Configuration\configPage.html" LogicalName="StrmAssistant.Jellyfin.Configuration.configPage.html" />
+    <EmbeddedResource Include="Properties\thumb.png" />
+    <EmbeddedResource Include="Tokenizer\linux\libsimple.so" />
+    <EmbeddedResource Include="Tokenizer\win\libsimple.so" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <!-- Jellyfin 核心依赖 -->
+    <PackageReference Include="Jellyfin.Controller" Version="10.10.0">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="Jellyfin.Model" Version="10.10.0">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    
+    <!-- 保留的第三方库（与 Emby 版本共享） -->
+    <PackageReference Include="CHTCHSConv" Version="1.0.0" />
+    <PackageReference Include="TinyPinyin" Version="1.1.0" />
+    <PackageReference Include="SQLitePCL.pretty.core" Version="1.2.2" />
+    
+    <!-- 音频指纹识别库（可选，用于自定义片头检测算法） -->
+    <!-- <PackageReference Include="SoundFingerprinting" Version="13.0.0" /> -->
+    
+    <!-- 构建工具 -->
+    <PackageReference Include="ILRepack" Version="2.0.42">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  
+  <!-- Jellyfin 插件构建目标 -->
+  <!-- 注意：依赖 DLL 合并目前需要手动处理 -->
+  <Target Name="PostBuildInfo" AfterTargets="Build">
+    <Message Text="=====================================" Importance="high" />
+    <Message Text="Jellyfin Plugin Build Complete!" Importance="high" />
+    <Message Text="Main DLL: $(TargetPath)" Importance="high" />
+    <Message Text="=====================================" Importance="high" />
+    <Message Text="Required dependencies:" Importance="high" />
+    <Message Text="  - ChineseConverter.dll" Importance="high" />
+    <Message Text="  - TinyPinyin.dll" Importance="high" />
+    <Message Text="  - SQLitePCL.pretty.dll" Importance="high" />
+    <Message Text="  - SQLitePCLRaw.core.dll" Importance="high" />
+    <Message Text="=====================================" Importance="high" />
+    <Message Text="Deployment options:" Importance="high" />
+    <Message Text="1. Copy all DLLs to plugin directory" Importance="high" />
+    <Message Text="2. Run merge script: ./merge-plugin.sh" Importance="high" />
+    <Message Text="=====================================" Importance="high" />
+  </Target>
+</Project>

@@ -1,0 +1,58 @@
+name: StrmAssistant for Jellyfin
+guid: 63c322b7-a371-41a3-b11f-04f8418b37d9
+version: 0.0.4
+targetAbi: 10.10.0.0
+framework: net8.0
+owner: jianxcao
+overview: Jellyfin 媒体服务器功能增强插件
+description: >
+  StrmAssistant for Jellyfin 提供 22+ 个功能增强，包括：
+
+  ✅ 媒体信息提取与持久化 - 使用 FFProbe 提取详细媒体流信息
+
+  ✅ 片头片尾自动检测 - 基于音频指纹和 MediaSegment API
+
+  ✅ 多版本自动合并 - 智能合并不同质量版本（4K、1080p 等）
+
+  ✅ 中文搜索增强 - 繁简混合、拼音首字母搜索
+
+  ✅ 字幕自动扫描 - 独立扫描外挂字幕文件
+
+  ✅ 拼音排序 - 中文内容按拼音首字母排序
+
+  ✅ TMDB 元数据增强 - 演职人员、剧集组等
+
+  原 Emby 版本改造，完全使用 Jellyfin 公共 API，稳定可靠。
+category: Library
+artifacts:
+  - StrmAssistant.dll
+changelog: >
+  ### Version 0.0.2 (2026-01-30)
+
+  🎉 首个 Jellyfin 版本发布！
+
+  #### 新特性
+
+  - ✨ 完全重写，移除 Harmony 依赖，使用 Jellyfin 公共 API
+  - ✨ 支持 Jellyfin 10.10.0+ 的 MediaSegment API
+  - ✨ 优化的中文搜索引擎，支持繁简混合和拼音搜索
+  - ✨ 改进的多版本合并逻辑
+  - ✨ 新增计划任务管理界面
+
+  #### 改进
+
+  - 🔧 更稳定的媒体信息提取（使用 IMediaEncoder）
+  - 🔧 更高效的字幕扫描（批量处理）
+  - 🔧 更智能的拼音排序
+
+  #### 架构变化
+
+  - 🏗️ 新增适配器层（LibraryManagerAdapter、MediaEncoderAdapter）
+  - 🏗️ 服务化架构（MediaInfoService、IntroDetectionService 等）
+  - 🏗️ 标准的 .NET DI 容器集成
+
+  #### 兼容性
+
+  - 📌 最低要求：Jellyfin 10.10.0
+  - 📌 推荐版本：Jellyfin 10.10.3+
+  - 📌 目标框架：.NET 8.0

@@ -1,0 +1,168 @@
+<div data-role="page" class="page type-interior pluginConfigurationPage" id="StrmAssistantConfigPage">
+    <div data-role="content">
+        <div class="content-primary">
+            <form id="StrmAssistantConfigForm">
+                <div class="verticalSection">
+                    <h2>🎬 StrmAssistant for Jellyfin</h2>
+                    <p>Jellyfin 媒体服务器功能增强插件 - 提供媒体信息提取、片头检测、多版本合并、中文搜索等功能</p>
+                </div>
+
+                <div class="verticalSection">
+                    <h2>⚙️ 功能开关</h2>
+                    
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input type="checkbox" id="enableMediaInfo" is="emby-checkbox" />
+                            <span>启用媒体信息提取</span>
+                        </label>
+                        <div class="fieldDescription">使用 FFProbe 提取详细的媒体流信息并持久化到数据库</div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input type="checkbox" id="enableIntroDetection" is="emby-checkbox" />
+                            <span>启用片头检测</span>
+                        </label>
+                        <div class="fieldDescription">使用音频指纹自动检测片头片尾并创建 MediaSegment（需要 Jellyfin 10.10.0+）</div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input type="checkbox" id="enableMergeVersion" is="emby-checkbox" />
+                            <span>启用多版本合并</span>
+                        </label>
+                        <div class="fieldDescription">自动合并同目录下的不同质量版本（4K、1080p 等）</div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input type="checkbox" id="enableChineseSearch" is="emby-checkbox" />
+                            <span>启用中文搜索增强</span>
+                        </label>
+                        <div class="fieldDescription">支持繁简混合、拼音首字母搜索</div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input type="checkbox" id="enableSubtitleScan" is="emby-checkbox" />
+                            <span>启用字幕扫描</span>
+                        </label>
+                        <div class="fieldDescription">独立扫描外挂字幕文件并自动关联</div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input type="checkbox" id="enablePinyinSort" is="emby-checkbox" />
+                            <span>启用拼音排序</span>
+                        </label>
+                        <div class="fieldDescription">中文内容按拼音首字母排序</div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input type="checkbox" id="debugMode" is="emby-checkbox" />
+                            <span>调试模式</span>
+                        </label>
+                        <div class="fieldDescription">输出详细日志信息，用于问题排查</div>
+                    </div>
+                </div>
+
+                <div class="verticalSection">
+                    <h2>💾 媒体信息持久化</h2>
+                    
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input type="checkbox" id="enableMediaInfoPersistence" is="emby-checkbox" />
+                            <span>启用媒体信息持久化到 JSON 文件</span>
+                        </label>
+                        <div class="fieldDescription">将提取的媒体信息保存为 JSON 文件，便于备份和迁移</div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="mediaInfoJsonRootFolder">
+                            媒体信息 JSON 文件根目录
+                        </label>
+                        <input type="text" id="mediaInfoJsonRootFolder" is="emby-input" class="emby-input" />
+                        <div class="fieldDescription">
+                            <strong>默认行为（留空）：</strong>JSON 文件保存在媒体文件所在的同一目录下<br/>
+                            例如：<code>/media/movies/Movie.mp4</code> → <code>/media/movies/Movie-mediainfo.json</code><br/>
+                            <br/>
+                            <strong>自定义根目录：</strong>JSON 文件保存在指定根目录下，保持相对路径结构<br/>
+                            例如：根目录设为 <code>/backup/mediainfo</code>，媒体文件 <code>/media/movies/Movie.mp4</code><br/>
+                            → JSON 文件保存为 <code>/backup/mediainfo/media/movies/Movie-mediainfo.json</code>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="verticalSection">
+                    <h2>📋 系统信息</h2>
+                    <p><strong>插件版本:</strong> 3.0.0</p>
+                    <p><strong>目标 Jellyfin 版本:</strong> 10.10.0+</p>
+                    <p><strong>框架:</strong> .NET 8.0</p>
+                </div>
+
+                <div class="verticalSection">
+                    <h2>📖 使用说明</h2>
+                    <ul>
+                        <li>在 <strong>控制面板 → 计划任务</strong> 中可以看到所有 StrmAssistant 任务</li>
+                        <li>点击任务右侧的 ▶️ 按钮可以手动执行</li>
+                        <li>片头检测需要 Jellyfin 10.10.0+ 版本支持 MediaSegment API</li>
+                        <li>中文搜索和拼音排序会在搜索时自动生效</li>
+                    </ul>
+                </div>
+
+                <div>
+                    <button is="emby-button" type="submit" class="raised button-submit block">
+                        <span>保存</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        var StrmAssistantConfig = {
+            pluginUniqueId: '63c322b7-a371-41a3-b11f-04f8418b37d9'
+        };
+
+        document.querySelector('#StrmAssistantConfigPage')
+            .addEventListener('pageshow', function() {
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(StrmAssistantConfig.pluginUniqueId).then(function (config) {
+                    document.querySelector('#enableMediaInfo').checked = config.EnableMediaInfoExtraction !== false;
+                    document.querySelector('#enableIntroDetection').checked = config.EnableIntroDetection !== false;
+                    document.querySelector('#enableMergeVersion').checked = config.EnableMultiVersionMerge !== false;
+                    document.querySelector('#enableChineseSearch').checked = config.EnableChineseSearch !== false;
+                    document.querySelector('#enableSubtitleScan').checked = config.EnableSubtitleScan !== false;
+                    document.querySelector('#enablePinyinSort').checked = config.EnablePinyinSort !== false;
+                    document.querySelector('#debugMode').checked = config.DebugMode === true;
+                    document.querySelector('#enableMediaInfoPersistence').checked = config.EnableMediaInfoPersistence === true;
+                    document.querySelector('#mediaInfoJsonRootFolder').value = config.MediaInfoJsonRootFolder || '';
+                    Dashboard.hideLoadingMsg();
+                });
+            });
+
+        document.querySelector('#StrmAssistantConfigForm')
+            .addEventListener('submit', function(e) {
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(StrmAssistantConfig.pluginUniqueId).then(function (config) {
+                    config.EnableMediaInfoExtraction = document.querySelector('#enableMediaInfo').checked;
+                    config.EnableIntroDetection = document.querySelector('#enableIntroDetection').checked;
+                    config.EnableMultiVersionMerge = document.querySelector('#enableMergeVersion').checked;
+                    config.EnableChineseSearch = document.querySelector('#enableChineseSearch').checked;
+                    config.EnableSubtitleScan = document.querySelector('#enableSubtitleScan').checked;
+                    config.EnablePinyinSort = document.querySelector('#enablePinyinSort').checked;
+                    config.DebugMode = document.querySelector('#debugMode').checked;
+                    config.EnableMediaInfoPersistence = document.querySelector('#enableMediaInfoPersistence').checked;
+                    config.MediaInfoJsonRootFolder = document.querySelector('#mediaInfoJsonRootFolder').value;
+                    
+                    ApiClient.updatePluginConfiguration(StrmAssistantConfig.pluginUniqueId, config).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                    });
+                });
+
+                e.preventDefault();
+                return false;
+            });
+    </script>
+</div>

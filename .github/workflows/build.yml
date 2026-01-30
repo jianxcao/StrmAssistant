@@ -1,0 +1,42 @@
+name: Build Plugin
+
+on:
+  workflow_dispatch:  # 仅允许手动触发
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1  # 只获取最新提交，加快克隆速度
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.x'
+
+      # 缓存NuGet包，大幅提升构建速度
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore dependencies
+        run: dotnet restore StrmAssistant/StrmAssistant.csproj
+
+      - name: Build the project
+        run: dotnet build StrmAssistant/StrmAssistant.csproj --no-restore --configuration Release -p:UseSharedCompilation=false
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StrmAssistantLite-${{ github.run_number }}
+          path: C:\Users\runneradmin\AppData\Roaming\Emby-Server\programdata\plugins\*
+          compression-level: 0  # DLL已经是二进制，不需要压缩
+          retention-days: 30
