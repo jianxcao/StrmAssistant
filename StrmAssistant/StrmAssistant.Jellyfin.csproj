@@ -1,16 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- 升级到 .NET 8.0 以匹配 Jellyfin 10.10+ -->
-    <TargetFrameworks>net8.0</TargetFrameworks>
+    <!-- 升级到 .NET 9.0 以匹配 Jellyfin 10.11+ -->
+    <TargetFrameworks>net9.0</TargetFrameworks>
     <AssemblyVersion>0.0.4.0</AssemblyVersion>
     <FileVersion>0.0.4.0</FileVersion>
     <CopyLocalLockFileAssemblies>True</CopyLocalLockFileAssemblies>
-    <IncludeSourceRevisionInInformationalVersion>true</IncludeSourceRevisionInInformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <LangVersion>latest</LangVersion>
     <!-- 定义 JELLYFIN 条件编译符号，排除 Emby 专用代码 -->
     <DefineConstants>JELLYFIN</DefineConstants>
     <!-- 禁用默认的 Compile 项自动包含，手动控制编译文件 -->
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- 禁用 SourceLink 和 Git 任务（避免 Git remote 警告） -->
+    <PublishRepositoryUrl>false</PublishRepositoryUrl>
+    <EmbedUntrackedSources>false</EmbedUntrackedSources>
+    <EnableSourceLink>false</EnableSourceLink>
+    <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
   </PropertyGroup>
   
   <!-- 仅编译 Jellyfin 相关文件 -->
@@ -33,11 +38,11 @@
   </ItemGroup>
   
   <ItemGroup>
-    <!-- Jellyfin 核心依赖 -->
-    <PackageReference Include="Jellyfin.Controller" Version="10.10.0">
+    <!-- Jellyfin 核心依赖 - 升级到 10.11.5 以匹配 Jellyfin 10.11+ -->
+    <PackageReference Include="Jellyfin.Controller" Version="10.11.5">
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>
-    <PackageReference Include="Jellyfin.Model" Version="10.10.0">
+    <PackageReference Include="Jellyfin.Model" Version="10.11.5">
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>
     
@@ -54,10 +59,11 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0">
+    <!-- SourceLink 已禁用，避免 Git remote 警告 -->
+    <!-- <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-    </PackageReference>
+    </PackageReference> -->
   </ItemGroup>
   
   <!-- Jellyfin 插件构建目标 -->

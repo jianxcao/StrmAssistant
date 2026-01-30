@@ -58,7 +58,7 @@ namespace StrmAssistant.Jellyfin.ScheduledTasks
             {
                 new TaskTriggerInfo
                 {
-                    Type = TaskTriggerInfo.TriggerDaily,
+                    Type = TaskTriggerInfoType.DailyTrigger,
                     TimeOfDayTicks = TimeSpan.FromHours(4).Ticks
                 }
             };

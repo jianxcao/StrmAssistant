@@ -12,6 +12,7 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Persistence;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.IO;
+using MediaBrowser.Model.Querying;
 using Microsoft.Extensions.Logging;
 using StrmAssistant.Jellyfin.Adapters;
 
@@ -23,7 +24,7 @@ namespace StrmAssistant.Jellyfin.Services
     public class SubtitleScanService
     {
         private readonly LibraryManagerAdapter _libraryManager;
-        private readonly IItemRepository _itemRepository;
+        private readonly IMediaStreamRepository _mediaStreamRepository;
         private readonly IFileSystem _fileSystem;
         private readonly ILogger<SubtitleScanService> _logger;
         
@@ -31,12 +32,12 @@ namespace StrmAssistant.Jellyfin.Services
         
         public SubtitleScanService(
             LibraryManagerAdapter libraryManager,
-            IItemRepository itemRepository,
+            IMediaStreamRepository mediaStreamRepository,
             IFileSystem fileSystem,
             ILogger<SubtitleScanService> logger)
         {
             _libraryManager = libraryManager;
-            _itemRepository = itemRepository;
+            _mediaStreamRepository = mediaStreamRepository;
             _fileSystem = fileSystem;
             _logger = logger;
         }
@@ -115,7 +116,9 @@ namespace StrmAssistant.Jellyfin.Services
                 _logger.LogInformation($"Found {subtitleFiles.Count} subtitle files for {item.Name}");
                 
                 // 2. 从 item 获取现有的媒体流
-                var existingStreams = item.GetMediaStreams()?.ToList() ?? new List<MediaStream>();
+                // Jellyfin 10.11+ GetMediaStreams() 返回 IReadOnlyList<MediaStream>
+                var streams = item.GetMediaStreams();
+                var existingStreams = streams?.ToList() ?? new List<MediaStream>();
                 
                 // 3. 检查哪些字幕文件已经存在（避免重复添加）
                 var existingSubtitlePaths = existingStreams
@@ -164,8 +167,8 @@ namespace StrmAssistant.Jellyfin.Services
                     }
                 }
                 
-                // 7. 使用 IItemRepository 保存 MediaStreams
-                _itemRepository.SaveMediaStreams(item.Id, existingStreams, cancellationToken);
+                // 7. 保存 MediaStreams 到数据库
+                await SaveMediaStreamsToDatabaseAsync(item, existingStreams, cancellationToken);
                 
                 // 8. 持久化
                 await _libraryManager.UpdateItemAsync(item, ItemUpdateType.MetadataEdit, cancellationToken);
@@ -181,7 +184,7 @@ namespace StrmAssistant.Jellyfin.Services
         }
         
         /// <summary>
-        /// 批量扫描字幕
+        /// 批量扫描字幕（支持并发处理）
         /// </summary>
         public async Task<int> BatchScanSubtitlesAsync(
             IProgress<double> progress = null,
@@ -200,26 +203,74 @@ namespace StrmAssistant.Jellyfin.Services
                 };
                 
                 var items = await _libraryManager.GetItemsAsync(query, cancellationToken);
-                var totalCount = items.Count;
-                var scannedCount = 0;
+                var itemList = items.ToList();
+                var totalCount = itemList.Count;
                 
-                for (var i = 0; i < totalCount; i++)
+                if (totalCount == 0)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        break;
-                    
-                    var count = await ScanSubtitlesAsync(items[i], cancellationToken);
-                    scannedCount += count;
-                    
-                    progress?.Report((double)(i + 1) / totalCount * 100);
+                    _logger.LogInformation("No items to scan for subtitles");
+                    return 0;
                 }
                 
-                _logger.LogInformation($"Batch subtitle scan completed: {scannedCount} subtitles found");
+                // 从配置中获取并发数（复用 MediaInfoConcurrency 配置）
+                var config = JellyfinPlugin.Instance?.Configuration;
+                var concurrency = config?.MediaInfoConcurrency ?? 2;
+                
+                // 确保并发数在合理范围内（1-10）
+                concurrency = Math.Max(1, Math.Min(10, concurrency));
+                
+                _logger.LogInformation("Starting batch subtitle scan for {Count} items with concurrency: {Concurrency}", 
+                    totalCount, concurrency);
+                
+                // 使用线程安全的计数器
+                var scannedCount = 0;
+                var processedCount = 0;
+                var lockObject = new object();
+                
+                // 使用 Parallel.ForEachAsync 进行并发处理
+                var parallelOptions = new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = concurrency,
+                    CancellationToken = cancellationToken
+                };
+                
+                await Parallel.ForEachAsync(
+                    itemList,
+                    parallelOptions,
+                    async (item, ct) =>
+                    {
+                        try
+                        {
+                            var count = await ScanSubtitlesAsync(item, ct);
+                            
+                            lock (lockObject)
+                            {
+                                scannedCount += count;
+                                processedCount++;
+                                var progressPercent = (double)processedCount / totalCount * 100;
+                                progress?.Report(progressPercent);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error processing item {ItemName} in batch subtitle scan", item.Name);
+                            
+                            lock (lockObject)
+                            {
+                                processedCount++;
+                                var progressPercent = (double)processedCount / totalCount * 100;
+                                progress?.Report(progressPercent);
+                            }
+                        }
+                    });
+                
+                _logger.LogInformation("Batch subtitle scan completed: {ScannedCount} subtitles found (Concurrency: {Concurrency})", 
+                    scannedCount, concurrency);
                 return scannedCount;
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error in batch subtitle scan: {ex.Message}");
+                _logger.LogError(ex, "Error in batch subtitle scan: {Message}", ex.Message);
                 return 0;
             }
         }
@@ -304,6 +355,28 @@ namespace StrmAssistant.Jellyfin.Services
                 "sub" => false, // 可能是图形字幕
                 _ => false
             };
+        }
+        
+        /// <summary>
+        /// 保存媒体流信息到数据库
+        /// </summary>
+        private Task SaveMediaStreamsToDatabaseAsync(BaseItem item, List<MediaStream> streams, CancellationToken cancellationToken)
+        {
+            try
+            {
+                // Jellyfin 10.11+ 使用 IMediaStreamRepository.SaveMediaStreams
+                // 方法签名: void SaveMediaStreams(Guid id, IReadOnlyList<MediaStream> streams, CancellationToken cancellationToken)
+                _mediaStreamRepository.SaveMediaStreams(item.Id, streams, cancellationToken);
+                
+                _logger.LogDebug("Successfully saved {Count} MediaStreams for {ItemName}", 
+                    streams.Count, item.Name);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to save MediaStreams for {ItemName}", item.Name);
+            }
+            
+            return Task.CompletedTask;
         }
     }
 }

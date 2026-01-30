@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Entities.Movies;
-using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 using StrmAssistant.Jellyfin.Adapters;
 

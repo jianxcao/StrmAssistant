@@ -32,13 +32,23 @@ namespace StrmAssistant.Jellyfin.Adapters
         {
             try
             {
+                _logger.LogDebug(
+                    "Querying items: Types={Types}, Recursive={Recursive}, ParentId={ParentId}", 
+                    string.Join(",", query.IncludeItemTypes ?? Array.Empty<BaseItemKind>()), 
+                    query.Recursive,
+                    query.ParentId);
+                
                 // Jellyfin 10.11+ GetItemList 返回 IReadOnlyList<BaseItem>
                 var result = _libraryManager.GetItemList(query);
+                
+                _logger.LogDebug("Query returned {Count} items", result?.Count ?? 0);
+                
                 return Task.FromResult(result?.ToList() ?? new List<BaseItem>());
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to get items");
+                _logger.LogError(ex, "Failed to get items with query: Types={Types}", 
+                    string.Join(",", query.IncludeItemTypes ?? Array.Empty<BaseItemKind>()));
                 return Task.FromResult(new List<BaseItem>());
             }
         }

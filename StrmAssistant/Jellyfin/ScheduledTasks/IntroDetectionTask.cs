@@ -47,6 +47,14 @@ namespace StrmAssistant.Jellyfin.ScheduledTasks
             
             try
             {
+                // 检查配置
+                var config = JellyfinPlugin.Instance?.Configuration;
+                if (config == null || !config.EnableIntroDetection)
+                {
+                    _logger.LogInformation("Intro detection is disabled in configuration");
+                    return;
+                }
+                
                 // 获取所有剧集
                 var query = new InternalItemsQuery
                 {
@@ -55,10 +63,54 @@ namespace StrmAssistant.Jellyfin.ScheduledTasks
                     IsVirtualItem = false
                 };
                 
+                _logger.LogDebug("Querying for series with recursive search");
+                
                 var series = await _libraryManager.GetItemsAsync(query, cancellationToken);
                 var seriesList = series.OfType<Series>().ToList();
                 
-                _logger.LogInformation("Found {Count} series for intro detection", seriesList.Count);
+                _logger.LogInformation("Found {Count} series for intro detection (Total items: {Total})", 
+                    seriesList.Count, series.Count);
+                
+                // 如果没有找到剧集，尝试诊断问题
+                if (seriesList.Count == 0)
+                {
+                    _logger.LogWarning("⚠️ No series found. Diagnosing...");
+                    
+                    // 检查是否有任何媒体库
+                    var allItemsQuery = new InternalItemsQuery
+                    {
+                        Recursive = true
+                    };
+                    var allItems = await _libraryManager.GetItemsAsync(allItemsQuery, cancellationToken);
+                    _logger.LogInformation("Total items in all libraries: {Count}", allItems.Count);
+                    
+                    // 检查是否有剧集项
+                    var episodeQuery = new InternalItemsQuery
+                    {
+                        IncludeItemTypes = new[] { BaseItemKind.Episode },
+                        Recursive = true,
+                        IsVirtualItem = false
+                    };
+                    var episodes = await _libraryManager.GetItemsAsync(episodeQuery, cancellationToken);
+                    _logger.LogInformation("Total episodes found: {Count}", episodes.Count);
+                    
+                    if (episodes.Count > 0)
+                    {
+                        _logger.LogInformation("📺 Found {Count} episodes but no series. This might indicate a library structure issue.", episodes.Count);
+                        _logger.LogInformation("💡 Suggestion: Make sure your TV shows are organized in the standard Jellyfin structure:");
+                        _logger.LogInformation("   📁 TV Shows/");
+                        _logger.LogInformation("      📁 Show Name/");
+                        _logger.LogInformation("         📁 Season 01/");
+                        _logger.LogInformation("            📄 S01E01.mkv");
+                    }
+                    else
+                    {
+                        _logger.LogInformation("❌ No episodes found in any library.");
+                        _logger.LogInformation("💡 Suggestion: Add TV shows to your Jellyfin library first.");
+                    }
+                    
+                    return;
+                }
                 
                 var totalProcessed = 0;
                 
@@ -110,7 +162,7 @@ namespace StrmAssistant.Jellyfin.ScheduledTasks
             {
                 new TaskTriggerInfo
                 {
-                    Type = TaskTriggerInfo.TriggerDaily,
+                    Type = TaskTriggerInfoType.DailyTrigger,
                     TimeOfDayTicks = TimeSpan.FromHours(3).Ticks
                 }
             };

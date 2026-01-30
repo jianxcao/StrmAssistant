@@ -70,5 +70,11 @@ namespace StrmAssistant.Jellyfin
         /// 启用后，即使已有媒体信息也会重新提取（下次任务执行后自动关闭）
         /// </summary>
         public bool ForceReExtractMediaInfo { get; set; } = false;
+        
+        /// <summary>
+        /// 强制重新检测所有片头片尾
+        /// 启用后，即使已有检测结果也会重新检测（下次任务执行后自动关闭）
+        /// </summary>
+        public bool ForceReDetectIntro { get; set; } = false;
     }
 }

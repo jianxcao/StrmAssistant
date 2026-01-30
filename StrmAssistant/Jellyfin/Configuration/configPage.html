@@ -26,6 +26,14 @@
                         <div class="fieldDescription">使用音频指纹自动检测片头片尾并创建 MediaSegment（需要 Jellyfin 10.10.0+）</div>
                     </div>
 
+                    <div class="checkboxContainer checkboxContainer-withDescription" style="margin-left: 2em;">
+                        <label>
+                            <input type="checkbox" id="forceReDetectIntro" is="emby-checkbox" />
+                            <span>🔄 强制重新检测片头片尾</span>
+                        </label>
+                        <div class="fieldDescription">⚠️ 启用后将重新检测所有剧集的片头片尾（包括已检测过的），下次任务执行后自动关闭</div>
+                    </div>
+
                     <div class="checkboxContainer checkboxContainer-withDescription">
                         <label>
                             <input type="checkbox" id="enableMergeVersion" is="emby-checkbox" />
@@ -64,6 +72,22 @@
                             <span>调试模式</span>
                         </label>
                         <div class="fieldDescription">输出详细日志信息，用于问题排查</div>
+                    </div>
+                </div>
+
+                <div class="verticalSection">
+                    <h2>⚡ 性能设置</h2>
+                    
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="mediaInfoConcurrency">
+                            媒体信息提取并发数
+                        </label>
+                        <input type="number" id="mediaInfoConcurrency" is="emby-input" class="emby-input" min="1" max="10" step="1" />
+                        <div class="fieldDescription">
+                            控制媒体信息提取和字幕扫描的并发线程数（范围：1-10）<br/>
+                            <strong>默认值：</strong>2<br/>
+                            <strong>注意：</strong>此设置同时影响媒体信息提取和字幕扫描任务的并发数。过高的并发数可能导致磁盘 I/O 瓶颈或 CPU 占用过高。
+                        </div>
                     </div>
                 </div>
 
@@ -126,6 +150,7 @@
                         <li>在 <strong>控制面板 → 计划任务</strong> 中可以看到所有 StrmAssistant 任务</li>
                         <li>点击任务右侧的 ▶️ 按钮可以手动执行</li>
                         <li>片头检测需要 Jellyfin 10.10.0+ 版本支持 MediaSegment API</li>
+                        <li><strong>🔄 强制重新检测</strong>：启用后将重新检测所有剧集（包括已检测过的），任务完成后自动关闭</li>
                         <li>中文搜索和拼音排序会在搜索时自动生效</li>
                     </ul>
                 </div>
@@ -150,6 +175,7 @@
                 ApiClient.getPluginConfiguration(StrmAssistantConfig.pluginUniqueId).then(function (config) {
                     document.querySelector('#enableMediaInfo').checked = config.EnableMediaInfoExtraction !== false;
                     document.querySelector('#enableIntroDetection').checked = config.EnableIntroDetection !== false;
+                    document.querySelector('#forceReDetectIntro').checked = config.ForceReDetectIntro === true;
                     document.querySelector('#enableMergeVersion').checked = config.EnableMultiVersionMerge !== false;
                     document.querySelector('#enableChineseSearch').checked = config.EnableChineseSearch !== false;
                     document.querySelector('#enableSubtitleScan').checked = config.EnableSubtitleScan !== false;
@@ -158,6 +184,7 @@
                     document.querySelector('#enableMediaInfoPersistence').checked = config.EnableMediaInfoPersistence === true;
                     document.querySelector('#mediaInfoJsonRootFolder').value = config.MediaInfoJsonRootFolder || '';
                     document.querySelector('#forceReExtractMediaInfo').checked = config.ForceReExtractMediaInfo === true;
+                    document.querySelector('#mediaInfoConcurrency').value = config.MediaInfoConcurrency || 2;
                     Dashboard.hideLoadingMsg();
                 });
             });
@@ -168,6 +195,7 @@
                 ApiClient.getPluginConfiguration(StrmAssistantConfig.pluginUniqueId).then(function (config) {
                     config.EnableMediaInfoExtraction = document.querySelector('#enableMediaInfo').checked;
                     config.EnableIntroDetection = document.querySelector('#enableIntroDetection').checked;
+                    config.ForceReDetectIntro = document.querySelector('#forceReDetectIntro').checked;
                     config.EnableMultiVersionMerge = document.querySelector('#enableMergeVersion').checked;
                     config.EnableChineseSearch = document.querySelector('#enableChineseSearch').checked;
                     config.EnableSubtitleScan = document.querySelector('#enableSubtitleScan').checked;
@@ -176,6 +204,8 @@
                     config.EnableMediaInfoPersistence = document.querySelector('#enableMediaInfoPersistence').checked;
                     config.MediaInfoJsonRootFolder = document.querySelector('#mediaInfoJsonRootFolder').value;
                     config.ForceReExtractMediaInfo = document.querySelector('#forceReExtractMediaInfo').checked;
+                    var concurrencyValue = parseInt(document.querySelector('#mediaInfoConcurrency').value) || 2;
+                    config.MediaInfoConcurrency = Math.max(1, Math.min(10, concurrencyValue)); // 限制在 1-10 范围内
                     
                     ApiClient.updatePluginConfiguration(StrmAssistantConfig.pluginUniqueId, config).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
