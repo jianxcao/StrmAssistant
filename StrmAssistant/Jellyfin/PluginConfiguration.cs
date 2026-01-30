@@ -54,6 +54,24 @@ namespace StrmAssistant.Jellyfin
         public int MediaInfoConcurrency { get; set; } = 2;
         
         /// <summary>
+        /// 片头检测并发数（同时处理的剧集数）
+        /// 建议设置为 1-3，避免网络拥堵
+        /// </summary>
+        public int IntroDetectionConcurrency { get; set; } = 2;
+        
+        /// <summary>
+        /// 指纹提取时长（分钟）
+        /// 从视频开头提取多长时间的音频用于指纹分析
+        /// </summary>
+        public int IntroFingerprintDurationMinutes { get; set; } = 5;
+        
+        /// <summary>
+        /// 启用指纹缓存
+        /// 缓存已提取的指纹，避免重复处理
+        /// </summary>
+        public bool EnableFingerprintCache { get; set; } = true;
+        
+        /// <summary>
         /// 启用媒体信息持久化到 JSON 文件
         /// </summary>
         public bool EnableMediaInfoPersistence { get; set; } = false;

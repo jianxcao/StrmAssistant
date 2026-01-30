@@ -227,6 +227,23 @@ namespace StrmAssistant.Jellyfin.Services
             public string FileContentHash { get; set; }
             public DateTime FileLastWriteTime { get; set; }
             public MediaBrowser.Model.Dto.MediaSourceInfo MediaInfo { get; set; }
+            
+            /// <summary>
+            /// 片头信息（由 IntroDetectionService 填充）
+            /// </summary>
+            public IntroInfo Intro { get; set; }
+        }
+        
+        /// <summary>
+        /// 片头信息
+        /// </summary>
+        public class IntroInfo
+        {
+            public bool HasIntro { get; set; }
+            public double IntroStartSeconds { get; set; }
+            public double IntroEndSeconds { get; set; }
+            public double Confidence { get; set; }
+            public DateTime DetectedAt { get; set; }
         }
         
         /// <summary>
@@ -305,6 +322,102 @@ namespace StrmAssistant.Jellyfin.Services
             }
             
             return Task.CompletedTask;
+        }
+        
+        /// <summary>
+        /// 获取媒体信息 JSON 路径
+        /// </summary>
+        public string GetMediaInfoJsonPath(BaseItem item)
+        {
+            var config = JellyfinPlugin.Instance?.Configuration;
+            if (config == null || !config.EnableMediaInfoPersistence)
+            {
+                return null;
+            }
+            
+            return GetMediaInfoJsonPath(item, config.MediaInfoJsonRootFolder);
+        }
+        
+        /// <summary>
+        /// 读取媒体信息 JSON 中的片头信息
+        /// </summary>
+        public async Task<IntroInfo> GetIntroInfoFromJsonAsync(BaseItem item, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var jsonPath = GetMediaInfoJsonPath(item);
+                if (string.IsNullOrEmpty(jsonPath) || !File.Exists(jsonPath))
+                {
+                    return null;
+                }
+                
+                var cachedInfo = await LoadCachedMediaInfoAsync(item, jsonPath, cancellationToken);
+                return cachedInfo?.Intro;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to get intro info from JSON for {ItemName}", item.Name);
+                return null;
+            }
+        }
+        
+        /// <summary>
+        /// 更新媒体信息 JSON 中的片头信息
+        /// </summary>
+        public async Task<bool> UpdateIntroInfoInJsonAsync(BaseItem item, IntroInfo introInfo, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var jsonPath = GetMediaInfoJsonPath(item);
+                if (string.IsNullOrEmpty(jsonPath))
+                {
+                    _logger.LogDebug("Media info persistence not enabled, skipping intro info update");
+                    return false;
+                }
+                
+                // 如果 JSON 文件不存在，先提取媒体信息
+                if (!File.Exists(jsonPath))
+                {
+                    _logger.LogInformation("Media info JSON not found, extracting media info first for {ItemName}", item.Name);
+                    var success = await ExtractAndPersistMediaInfoAsync(item, cancellationToken);
+                    if (!success)
+                    {
+                        _logger.LogWarning("Failed to extract media info for {ItemName}", item.Name);
+                        return false;
+                    }
+                }
+                
+                // 读取现有 JSON
+                var cachedInfo = await LoadCachedMediaInfoAsync(item, jsonPath, cancellationToken);
+                if (cachedInfo == null)
+                {
+                    _logger.LogWarning("Failed to load cached media info for {ItemName}", item.Name);
+                    return false;
+                }
+                
+                // 更新片头信息
+                cachedInfo.Intro = introInfo;
+                
+                // 保存回 JSON
+                var jsonOptions = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                };
+                
+                var jsonContent = JsonSerializer.Serialize(cachedInfo, jsonOptions);
+                await File.WriteAllTextAsync(jsonPath, jsonContent, cancellationToken);
+                
+                _logger.LogInformation("Updated intro info in JSON for {ItemName}: {HasIntro}", 
+                    item.Name, introInfo.HasIntro);
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to update intro info in JSON for {ItemName}", item.Name);
+                return false;
+            }
         }
         
         /// <summary>

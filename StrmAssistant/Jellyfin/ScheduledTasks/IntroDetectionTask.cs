@@ -55,97 +55,96 @@ namespace StrmAssistant.Jellyfin.ScheduledTasks
                     return;
                 }
                 
-                // 获取所有剧集
+                // 直接获取所有剧集（Episode），不要通过 Series -> Season 层级查询
                 var query = new InternalItemsQuery
                 {
-                    IncludeItemTypes = new[] { BaseItemKind.Series },
+                    IncludeItemTypes = new[] { BaseItemKind.Episode },
                     Recursive = true,
                     IsVirtualItem = false
                 };
                 
-                _logger.LogDebug("Querying for series with recursive search");
+                _logger.LogDebug("Querying for episodes with recursive search");
                 
-                var series = await _libraryManager.GetItemsAsync(query, cancellationToken);
-                var seriesList = series.OfType<Series>().ToList();
+                var items = await _libraryManager.GetItemsAsync(query, cancellationToken);
+                var episodes = items.OfType<Episode>().ToList();
                 
-                _logger.LogInformation("Found {Count} series for intro detection (Total items: {Total})", 
-                    seriesList.Count, series.Count);
+                _logger.LogInformation("Found {Count} episodes for intro detection", episodes.Count);
                 
-                // 如果没有找到剧集，尝试诊断问题
-                if (seriesList.Count == 0)
+                if (episodes.Count == 0)
                 {
-                    _logger.LogWarning("⚠️ No series found. Diagnosing...");
-                    
-                    // 检查是否有任何媒体库
-                    var allItemsQuery = new InternalItemsQuery
-                    {
-                        Recursive = true
-                    };
-                    var allItems = await _libraryManager.GetItemsAsync(allItemsQuery, cancellationToken);
-                    _logger.LogInformation("Total items in all libraries: {Count}", allItems.Count);
-                    
-                    // 检查是否有剧集项
-                    var episodeQuery = new InternalItemsQuery
-                    {
-                        IncludeItemTypes = new[] { BaseItemKind.Episode },
-                        Recursive = true,
-                        IsVirtualItem = false
-                    };
-                    var episodes = await _libraryManager.GetItemsAsync(episodeQuery, cancellationToken);
-                    _logger.LogInformation("Total episodes found: {Count}", episodes.Count);
-                    
-                    if (episodes.Count > 0)
-                    {
-                        _logger.LogInformation("📺 Found {Count} episodes but no series. This might indicate a library structure issue.", episodes.Count);
-                        _logger.LogInformation("💡 Suggestion: Make sure your TV shows are organized in the standard Jellyfin structure:");
-                        _logger.LogInformation("   📁 TV Shows/");
-                        _logger.LogInformation("      📁 Show Name/");
-                        _logger.LogInformation("         📁 Season 01/");
-                        _logger.LogInformation("            📄 S01E01.mkv");
-                    }
-                    else
-                    {
-                        _logger.LogInformation("❌ No episodes found in any library.");
-                        _logger.LogInformation("💡 Suggestion: Add TV shows to your Jellyfin library first.");
-                    }
-                    
+                    _logger.LogWarning("No episodes found in library");
                     return;
                 }
                 
-                var totalProcessed = 0;
+                // 按 Series 分组
+                var episodesBySeries = episodes.GroupBy(e => e.SeriesId).ToList();
+                _logger.LogInformation("Episodes grouped into {Count} series", episodesBySeries.Count);
                 
-                for (var i = 0; i < seriesList.Count; i++)
+                // 检查是否强制重新检测
+                var forceReDetect = config?.ForceReDetectIntro ?? false;
+                if (forceReDetect)
+                {
+                    _logger.LogWarning("🔄 Force re-detect is enabled - all episodes will be re-detected");
+                }
+                
+                var totalProcessed = 0;
+                var processedEpisodes = 0;
+                
+                foreach (var seriesGroup in episodesBySeries)
                 {
                     if (cancellationToken.IsCancellationRequested)
                         break;
                     
-                    var currentSeries = seriesList[i];
-                    _logger.LogInformation("Processing series: {SeriesName}", currentSeries.Name);
+                    var firstEpisode = seriesGroup.First();
+                    var seriesName = firstEpisode.SeriesName ?? "Unknown";
                     
-                    // 获取所有季 - 使用 InternalItemsQuery 替代 GetRecursiveChildren()
-                    var seasonQuery = new InternalItemsQuery
-                    {
-                        ParentId = currentSeries.Id,
-                        IncludeItemTypes = new[] { BaseItemKind.Season },
-                        Recursive = false
-                    };
+                    _logger.LogInformation("Processing series: {SeriesName} ({EpisodeCount} episodes)", 
+                        seriesName, seriesGroup.Count());
                     
-                    var seasons = await _libraryManager.GetItemsAsync(seasonQuery, cancellationToken);
-                    var seasonList = seasons.OfType<Season>().ToList();
+                    // 按季分组
+                    var episodesBySeason = seriesGroup.GroupBy(e => e.ParentIndexNumber ?? 0).ToList();
                     
-                    foreach (var season in seasonList)
+                    foreach (var seasonGroup in episodesBySeason)
                     {
                         if (cancellationToken.IsCancellationRequested)
                             break;
                         
-                        var processed = await _introDetectionService.BatchDetectIntrosAsync(season, null, cancellationToken);
-                        totalProcessed += processed;
+                        var seasonNumber = seasonGroup.Key;
+                        var seasonEpisodes = seasonGroup.ToList();
+                        
+                        _logger.LogInformation("Processing Season {Season} ({EpisodeCount} episodes)", 
+                            seasonNumber, seasonEpisodes.Count);
+                        
+                        // 检测每一集
+                        foreach (var episode in seasonEpisodes)
+                        {
+                            if (cancellationToken.IsCancellationRequested)
+                                break;
+                            
+                            processedEpisodes++;
+                            
+                            var result = await _introDetectionService.DetectIntroAsync(episode, cancellationToken);
+                            if (result != null && result.HasIntro)
+                            {
+                                totalProcessed++;
+                            }
+                            
+                            progress?.Report((double)processedEpisodes / episodes.Count * 100);
+                        }
                     }
-                    
-                    progress?.Report((double)(i + 1) / seriesList.Count * 100);
                 }
                 
-                _logger.LogInformation("Intro detection completed. Processed {Count} episodes", totalProcessed);
+                _logger.LogInformation(
+                    "Intro detection completed. Detected intros for {DetectedCount}/{TotalCount} episodes", 
+                    totalProcessed, episodes.Count);
+                    
+                // 如果启用了强制重新检测，任务完成后自动关闭该选项
+                if (forceReDetect && config != null)
+                {
+                    config.ForceReDetectIntro = false;
+                    JellyfinPlugin.Instance?.SaveConfiguration();
+                    _logger.LogInformation("✅ Force re-detect option has been automatically disabled");
+                }
             }
             catch (Exception ex)
             {

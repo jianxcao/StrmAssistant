@@ -16,6 +16,7 @@ using MediaBrowser.Model.IO;
 using MediaBrowser.Model.Querying;
 using Microsoft.Extensions.Logging;
 using StrmAssistant.Jellyfin.Adapters;
+using StrmAssistant.Jellyfin.Common;
 using MediaBrowser.Model.Configuration;
 
 namespace StrmAssistant.Jellyfin.Services
@@ -32,7 +33,11 @@ namespace StrmAssistant.Jellyfin.Services
         private readonly ILibraryManager _libraryManagerCore;
         private readonly IFileSystem _fileSystem;
         private readonly MediaSegmentAdapter _mediaSegmentAdapter;
+        private readonly ChromaprintService _chromaprintService;
+        private readonly MediaInfoService _mediaInfoService;
         private const string MarkerSuffix = "#SA";
+        private const int MinEpisodesForFingerprint = 2;
+        private const double SimilarityThreshold = 0.8; // 80% 相似度
         
         public IntroDetectionService(
             LibraryManagerAdapter libraryManager,
@@ -41,6 +46,8 @@ namespace StrmAssistant.Jellyfin.Services
             ILibraryManager libraryManagerCore,
             IFileSystem fileSystem,
             MediaSegmentAdapter mediaSegmentAdapter,
+            ChromaprintService chromaprintService,
+            MediaInfoService mediaInfoService,
             ILogger<IntroDetectionService> logger)
         {
             _libraryManager = libraryManager;
@@ -49,11 +56,14 @@ namespace StrmAssistant.Jellyfin.Services
             _libraryManagerCore = libraryManagerCore;
             _fileSystem = fileSystem;
             _mediaSegmentAdapter = mediaSegmentAdapter;
+            _chromaprintService = chromaprintService;
+            _mediaInfoService = mediaInfoService;
             _logger = logger;
         }
         
         /// <summary>
         /// 检测剧集的片头片尾
+        /// MVP 版本：检测前 5 分钟，≥2 集用音频指纹，<2 集用章节分析
         /// </summary>
         public async Task<IntroDetectionResult> DetectIntroAsync(Episode episode, CancellationToken cancellationToken = default)
         {
@@ -68,29 +78,270 @@ namespace StrmAssistant.Jellyfin.Services
                 _logger.LogInformation("Detecting intro for episode: {SeriesName} - S{Season:D2}E{Episode:D2}", 
                     episode.SeriesName, episode.ParentIndexNumber ?? 0, episode.IndexNumber ?? 0);
                 
-                // TODO: 实现音频指纹提取逻辑
-                // 这里需要集成 Chromaprint 库来提取音频指纹
-                // 参考 Media Analyzer 插件的实现
+                // 获取同季所有剧集
+                var seasonEpisodes = await GetSeasonEpisodesAsync(episode, cancellationToken);
                 
-                var result = new IntroDetectionResult
+                IntroDetectionResult result;
+                
+                if (seasonEpisodes.Count >= MinEpisodesForFingerprint)
                 {
-                    ItemId = episode.Id,
-                    HasIntro = false,
-                    IntroStart = TimeSpan.Zero,
-                    IntroEnd = TimeSpan.Zero
-                };
+                    // 方案 A：音频指纹比对（≥2 集）
+                    _logger.LogInformation("Using audio fingerprint detection ({Count} episodes in season)", 
+                        seasonEpisodes.Count);
+                    result = await DetectByAudioFingerprintAsync(episode, seasonEpisodes, cancellationToken);
+                }
+                else
+                {
+                    // 方案 B：章节分析（<2 集）
+                    _logger.LogInformation("Using chapter analysis (only {Count} episode(s) in season)", 
+                        seasonEpisodes.Count);
+                    result = await DetectFromChaptersAsync(episode, cancellationToken);
+                }
                 
                 // 如果检测到片头，保存到数据库和 JSON
-                if (result.HasIntro)
+                if (result != null && result.HasIntro)
                 {
+                    _logger.LogInformation("Intro detected for {EpisodeName}, saving markers (Start: {Start}, End: {End})", 
+                        episode.Name, result.IntroStart, result.IntroEnd);
                     await SaveIntroMarkersAsync(episode, result, cancellationToken);
                 }
+                else if (result != null && !result.HasIntro)
+                {
+                    _logger.LogInformation("No intro detected for {EpisodeName}, skipping save", episode.Name);
+                }
+                else
+                {
+                    _logger.LogWarning("Detection result is null for {EpisodeName}", episode.Name);
+                }
+                
+                return result ?? new IntroDetectionResult
+                {
+                    ItemId = episode.Id,
+                    HasIntro = false
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error detecting intro for {EpisodeName}", episode.Name);
+                return null;
+            }
+        }
+        
+        /// <summary>
+        /// 获取同季所有剧集
+        /// </summary>
+        private async Task<List<Episode>> GetSeasonEpisodesAsync(Episode episode, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var query = new InternalItemsQuery
+                {
+                    ParentId = episode.ParentId, // Season ID
+                    IncludeItemTypes = new[] { BaseItemKind.Episode },
+                    Recursive = false
+                };
+                
+                var items = await _libraryManager.GetItemsAsync(query, cancellationToken);
+                return items.OfType<Episode>().OrderBy(e => e.IndexNumber ?? 0).ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get season episodes");
+                return new List<Episode> { episode };
+            }
+        }
+        
+        /// <summary>
+        /// 使用音频指纹检测片头（MVP 版本）
+        /// </summary>
+        private async Task<IntroDetectionResult> DetectByAudioFingerprintAsync(
+            Episode targetEpisode,
+            List<Episode> seasonEpisodes, 
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                // 检查 chromaprint 支持
+                if (!await _chromaprintService.IsChromaprintSupportedAsync(cancellationToken))
+                {
+                    _logger.LogWarning("Chromaprint not supported, falling back to chapter analysis");
+                    return await DetectFromChaptersAsync(targetEpisode, cancellationToken);
+                }
+                
+                // 先检查季度缓存
+                var cachedIntro = await GetSeasonIntroCacheAsync(targetEpisode, cancellationToken);
+                if (cachedIntro != null)
+                {
+                    _logger.LogInformation("Found season intro cache for {SeriesName} S{Season:D2}, using cached result (HasIntro: {HasIntro}, Start: {Start}, End: {End})", 
+                        targetEpisode.SeriesName, 
+                        targetEpisode.ParentIndexNumber ?? 0,
+                        cachedIntro.HasIntro,
+                        cachedIntro.IntroStart,
+                        cachedIntro.IntroEnd);
+                    return cachedIntro;
+                }
+                
+                _logger.LogInformation("No season cache found, extracting fingerprints...");
+                
+                // MVP: 只处理前 3 集（性能考虑）
+                var episodesToProcess = seasonEpisodes.Take(Math.Min(3, seasonEpisodes.Count)).ToList();
+                
+                _logger.LogInformation("Extracting fingerprints from {Count} episodes", episodesToProcess.Count);
+                
+                // 获取并发数配置（避免网络拥堵）
+                var config = JellyfinPlugin.Instance?.Configuration;
+                var maxConcurrency = config?.IntroDetectionConcurrency ?? 2;
+                _logger.LogDebug("Using concurrency limit: {MaxConcurrency}", maxConcurrency);
+                
+                // 使用信号量限制并发
+                var fingerprints = new System.Collections.Concurrent.ConcurrentDictionary<Guid, string>();
+                using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+                
+                var tasks = episodesToProcess.Select(async ep =>
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        return;
+                    
+                    await semaphore.WaitAsync(cancellationToken);
+                    try
+                    {
+                        // 获取实际的媒体路径（处理 .strm 文件）
+                        var actualPath = await StrmFileHelper.GetActualMediaPathAsync(ep, _logger, cancellationToken);
+                        
+                        if (string.IsNullOrEmpty(actualPath))
+                        {
+                            _logger.LogWarning("Cannot resolve media path for: {Name}", ep.Name);
+                            return;
+                        }
+                        
+                        // 对于 HTTP/RTSP 等流媒体 URL，直接使用
+                        // FFmpeg 支持从流媒体 URL 提取音频指纹
+                        _logger.LogDebug("Extracting fingerprint from: {Path}", actualPath);
+                        
+                        var fingerprint = await _chromaprintService.ExtractFingerprintAsync(
+                            actualPath, 
+                            TimeSpan.FromMinutes(5), 
+                            cancellationToken);
+                        
+                        fingerprints[ep.Id] = fingerprint;
+                        _logger.LogDebug("Extracted fingerprint for {Name}", ep.Name);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to extract fingerprint for {Name}", ep.Name);
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                }).ToList();
+                
+                await Task.WhenAll(tasks);
+                
+                _logger.LogInformation("✅ Fingerprint extraction completed: {Extracted}/{Total} episodes succeeded", 
+                    fingerprints.Count, episodesToProcess.Count);
+                
+                if (fingerprints.Count < 2)
+                {
+                    _logger.LogWarning("❌ Not enough fingerprints extracted ({Count} < 2), falling back to chapter analysis", 
+                        fingerprints.Count);
+                    return await DetectFromChaptersAsync(targetEpisode, cancellationToken);
+                }
+                
+                // 比对指纹找出共同片段（转换为 Dictionary）
+                _logger.LogInformation("🔍 Comparing {Count} fingerprints to find common intro segment...", fingerprints.Count);
+                var fingerprintDict = new Dictionary<Guid, string>(fingerprints);
+                var introSegment = FindCommonIntroSegment(fingerprintDict);
+                
+                IntroDetectionResult result;
+                
+                if (introSegment.HasValue)
+                {
+                    var (start, end) = introSegment.Value;
+                    _logger.LogInformation("✅ Detected intro: {Start} - {End} (duration: {Duration}s)", 
+                        start, end, (end - start).TotalSeconds);
+                    
+                    result = new IntroDetectionResult
+                    {
+                        ItemId = targetEpisode.Id,
+                        HasIntro = true,
+                        IntroStart = start,
+                        IntroEnd = end,
+                        Confidence = 0.9
+                    };
+                }
+                else
+                {
+                    _logger.LogWarning("❌ No common intro segment found in {Count} fingerprints. Possible reasons: 1) Episodes have different intros 2) Audio quality too low 3) Network streaming issues", 
+                        fingerprints.Count);
+                    result = new IntroDetectionResult
+                    {
+                        ItemId = targetEpisode.Id,
+                        HasIntro = false
+                    };
+                }
+                
+                // 保存季度缓存（所有季内剧集共享）
+                await SaveSeasonIntroCacheAsync(targetEpisode, result, cancellationToken);
                 
                 return result;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error detecting intro for {EpisodeName}", episode.Name);
+                _logger.LogError(ex, "Failed to detect intro by fingerprint");
+                return null;
+            }
+        }
+        
+        /// <summary>
+        /// 从章节信息中检测片头（MVP：暂未实现）
+        /// TODO: 实现章节分析功能
+        /// </summary>
+        private Task<IntroDetectionResult> DetectFromChaptersAsync(
+            Episode episode, 
+            CancellationToken cancellationToken)
+        {
+            _logger.LogWarning("Chapter analysis not yet implemented for single episode season");
+            
+            // MVP: 暂时不支持章节分析，直接返回未检测到
+            return Task.FromResult(new IntroDetectionResult
+            {
+                ItemId = episode.Id,
+                HasIntro = false
+            });
+        }
+        
+        /// <summary>
+        /// 找出共同的片头片段（MVP 简化版）
+        /// </summary>
+        private (TimeSpan start, TimeSpan end)? FindCommonIntroSegment(Dictionary<Guid, string> fingerprints)
+        {
+            try
+            {
+                if (fingerprints.Count < 2)
+                {
+                    return null;
+                }
+                
+                // MVP 简化：比对第一集和第二集
+                var firstFingerprint = fingerprints.Values.First();
+                var secondFingerprint = fingerprints.Values.Skip(1).First();
+                
+                var similarity = _chromaprintService.CompareFingerprints(firstFingerprint, secondFingerprint);
+                
+                _logger.LogDebug("Fingerprint similarity: {Similarity:P}", similarity);
+                
+                if (similarity >= SimilarityThreshold)
+                {
+                    // MVP: 假设片头在 30 秒到 120 秒之间
+                    return (TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(120));
+                }
+                
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to find common intro segment");
                 return null;
             }
         }
@@ -265,186 +516,30 @@ namespace StrmAssistant.Jellyfin.Services
                     return;
                 }
                 
-                var jsonPath = GetMediaInfoJsonPath(episode, config.MediaInfoJsonRootFolder);
-                
-                // 如果 JSON 文件不存在，需要先创建（包含媒体源信息）
-                if (!File.Exists(jsonPath))
+                // 使用 MediaInfoService 统一管理 JSON
+                var introInfo = new MediaInfoService.IntroInfo
                 {
-                    _logger.LogDebug("MediaInfo JSON file does not exist for {EpisodeName}, creating new file", episode.Name);
-                    await CreateMediaInfoJsonWithIntroMarkersAsync(episode, result, jsonPath, cancellationToken);
+                    HasIntro = result.HasIntro,
+                    IntroStartSeconds = result.IntroStart.TotalSeconds,
+                    IntroEndSeconds = result.IntroEnd.TotalSeconds,
+                    Confidence = result.Confidence,
+                    DetectedAt = DateTime.UtcNow
+                };
+                
+                var success = await _mediaInfoService.UpdateIntroInfoInJsonAsync(episode, introInfo, cancellationToken);
+                
+                if (success)
+                {
+                    _logger.LogInformation("Successfully saved intro info to media JSON for {EpisodeName}", episode.Name);
                 }
                 else
                 {
-                    // 更新现有 JSON 文件中的章节信息
-                    await UpdateIntroMarkersInJsonAsync(episode, result, jsonPath, cancellationToken);
+                    _logger.LogWarning("Failed to save intro info to media JSON for {EpisodeName}", episode.Name);
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to save intro markers to JSON for {EpisodeName}", episode.Name);
-                throw;
-            }
-        }
-        
-        /// <summary>
-        /// 创建包含片头标记的媒体信息 JSON 文件
-        /// </summary>
-        private async Task CreateMediaInfoJsonWithIntroMarkersAsync(
-            Episode episode, 
-            IntroDetectionResult result, 
-            string jsonPath, 
-            CancellationToken cancellationToken)
-        {
-            try
-            {
-                // Jellyfin 的 GetMediaSources 方法签名可能不同
-                // 尝试获取媒体源，如果失败则创建简单的章节列表
-                var mediaSources = episode.GetMediaSources(false);
-                
-                var introStartTicks = (long)result.IntroStart.TotalMilliseconds * 10000;
-                var introEndTicks = (long)result.IntroEnd.TotalMilliseconds * 10000;
-                
-                // 注意：Jellyfin 的 ChapterInfo 可能不支持 MarkerType，使用名称来标识
-                var introStartChapter = new ChapterInfo
-                {
-                    Name = "IntroStart" + MarkerSuffix,
-                    StartPositionTicks = introStartTicks
-                };
-                
-                var introEndChapter = new ChapterInfo
-                {
-                    Name = "IntroEnd" + MarkerSuffix,
-                    StartPositionTicks = introEndTicks
-                };
-                
-                var chapters = new List<ChapterInfo> { introStartChapter, introEndChapter };
-                
-                var mediaSourcesWithChapters = mediaSources.Select(mediaSource =>
-                    new MediaSourceWithChapters
-                    {
-                        MediaSourceInfo = mediaSource,
-                        Chapters = chapters
-                    }).ToList();
-                
-                // 清理不需要的字段
-                foreach (var jsonItem in mediaSourcesWithChapters)
-                {
-                    jsonItem.MediaSourceInfo.Id = null;
-                    jsonItem.MediaSourceInfo.Path = null;
-                    
-                    // Jellyfin 的 MediaStream 可能没有 Protocol 属性，只处理外部字幕
-                    foreach (var subtitle in jsonItem.MediaSourceInfo.MediaStreams.Where(m =>
-                                 m.IsExternal && m.Type == MediaStreamType.Subtitle))
-                    {
-                        if (!string.IsNullOrEmpty(subtitle.Path))
-                        {
-                            subtitle.Path = _fileSystem.GetFileInfo(subtitle.Path).Name;
-                        }
-                    }
-                    
-                    foreach (var chapter in jsonItem.Chapters)
-                    {
-                        chapter.ImageTag = null;
-                    }
-                }
-                
-                // 确保目录存在
-                var parentDirectory = Path.GetDirectoryName(jsonPath);
-                if (!string.IsNullOrEmpty(parentDirectory))
-                {
-                    Directory.CreateDirectory(parentDirectory);
-                }
-                
-                // 序列化到文件
-                var jsonOptions = new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-                };
-                var jsonContent = JsonSerializer.Serialize(mediaSourcesWithChapters, jsonOptions);
-                await File.WriteAllTextAsync(jsonPath, jsonContent, cancellationToken);
-                
-                _logger.LogInformation("Created MediaInfo JSON with intro markers: {JsonPath}", jsonPath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to create MediaInfo JSON with intro markers");
-                throw;
-            }
-        }
-        
-        /// <summary>
-        /// 更新 JSON 文件中的片头标记
-        /// </summary>
-        private async Task UpdateIntroMarkersInJsonAsync(
-            Episode episode,
-            IntroDetectionResult result,
-            string jsonPath,
-            CancellationToken cancellationToken)
-        {
-            try
-            {
-                // 读取现有 JSON
-                var existingJsonContent = await File.ReadAllTextAsync(jsonPath, cancellationToken);
-                var mediaSourcesWithChapters = JsonSerializer.Deserialize<List<MediaSourceWithChapters>>(existingJsonContent);
-                
-                if (mediaSourcesWithChapters == null || !mediaSourcesWithChapters.Any())
-                {
-                    _logger.LogWarning("MediaInfo JSON file is empty or invalid: {JsonPath}", jsonPath);
-                    return;
-                }
-                
-                var introStartTicks = (long)result.IntroStart.TotalMilliseconds * 10000;
-                var introEndTicks = (long)result.IntroEnd.TotalMilliseconds * 10000;
-                
-                // 更新每个媒体源的章节信息
-                foreach (var mediaSourceWithChapters in mediaSourcesWithChapters)
-                {
-                    // 移除旧的片头片尾标记（通过名称匹配，因为 Jellyfin 的 ChapterInfo 可能没有 MarkerType）
-                    mediaSourceWithChapters.Chapters.RemoveAll(c =>
-                        c.Name != null && (c.Name.Contains("IntroStart") || c.Name.Contains("IntroEnd")));
-                    
-                    // 添加新的片头片尾标记
-                    // 注意：Jellyfin 的 ChapterInfo 可能不支持 MarkerType，使用名称来标识
-                    var introStart = new ChapterInfo
-                    {
-                        Name = "IntroStart" + MarkerSuffix,
-                        StartPositionTicks = introStartTicks
-                    };
-                    mediaSourceWithChapters.Chapters.Add(introStart);
-                    
-                    var introEnd = new ChapterInfo
-                    {
-                        Name = "IntroEnd" + MarkerSuffix,
-                        StartPositionTicks = introEndTicks
-                    };
-                    mediaSourceWithChapters.Chapters.Add(introEnd);
-                    
-                    // 按时间排序
-                    mediaSourceWithChapters.Chapters.Sort((c1, c2) => c1.StartPositionTicks.CompareTo(c2.StartPositionTicks));
-                    
-                    // 清理 ImageTag
-                    foreach (var chapter in mediaSourceWithChapters.Chapters)
-                    {
-                        chapter.ImageTag = null;
-                    }
-                }
-                
-                // 保存回文件
-                var jsonOptions = new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-                };
-                var updatedJsonContent = JsonSerializer.Serialize(mediaSourcesWithChapters, jsonOptions);
-                await File.WriteAllTextAsync(jsonPath, updatedJsonContent, cancellationToken);
-                
-                _logger.LogInformation("Updated intro markers in JSON: {JsonPath}", jsonPath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to update intro markers in JSON");
-                throw;
             }
         }
         
@@ -455,47 +550,12 @@ namespace StrmAssistant.Jellyfin.Services
         {
             try
             {
-                // 方法 1: 检查 MediaSegment API（如果可用）
-                if (_mediaSegmentAdapter.IsSupported)
+                // 使用 MediaInfoService 统一检查
+                var introInfo = await _mediaInfoService.GetIntroInfoFromJsonAsync(episode, cancellationToken);
+                if (introInfo != null && introInfo.HasIntro)
                 {
-                    // 尝试通过反射获取 segments
-                    // 这里简化处理，如果 MediaSegment API 可用，我们假设已经检测过
-                    // 更精确的实现需要调用 GetSegmentsAsync 方法
-                    _logger.LogDebug("MediaSegment API is available, checking for existing segments");
-                }
-                
-                // 方法 2: 检查 JSON 文件中是否有片头标记
-                var config = JellyfinPlugin.Instance?.Configuration;
-                if (config != null && config.EnableMediaInfoPersistence)
-                {
-                    var jsonPath = GetMediaInfoJsonPath(episode, config.MediaInfoJsonRootFolder ?? string.Empty);
-                    if (_fileSystem.FileExists(jsonPath))
-                    {
-                        try
-                        {
-                            var jsonContent = await File.ReadAllTextAsync(jsonPath, cancellationToken);
-                            var mediaSourcesWithChapters = JsonSerializer.Deserialize<List<MediaSourceWithChapters>>(jsonContent);
-                            
-                            if (mediaSourcesWithChapters != null)
-                            {
-                                // 检查是否有片头标记
-                                foreach (var mediaSource in mediaSourcesWithChapters)
-                                {
-                                    if (mediaSource.Chapters != null && 
-                                        mediaSource.Chapters.Any(c => c.Name != null && 
-                                            (c.Name.Contains("IntroStart") || c.Name.Contains("IntroEnd"))))
-                                    {
-                                        _logger.LogDebug("Found existing intro markers in JSON for {EpisodeName}", episode.Name);
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to check JSON for intro markers: {JsonPath}", jsonPath);
-                        }
-                    }
+                    _logger.LogDebug("Found existing intro info in JSON for {EpisodeName}", episode.Name);
+                    return true;
                 }
                 
                 return false;
@@ -508,35 +568,138 @@ namespace StrmAssistant.Jellyfin.Services
         }
         
         /// <summary>
-        /// 获取媒体信息 JSON 文件路径
+        /// 获取季度片头缓存
         /// </summary>
-        private string GetMediaInfoJsonPath(BaseItem item, string jsonRootFolder)
+        private async Task<IntroDetectionResult> GetSeasonIntroCacheAsync(Episode episode, CancellationToken cancellationToken)
         {
-            const string MediaInfoFileExtension = "-mediainfo.json";
-            
-            var relativePath = item.ContainingFolderPath;
-            if (!string.IsNullOrEmpty(jsonRootFolder) && Path.IsPathRooted(item.ContainingFolderPath))
+            try
             {
-                relativePath = Path.GetRelativePath(Path.GetPathRoot(item.ContainingFolderPath)!, 
-                    item.ContainingFolderPath);
+                var config = JellyfinPlugin.Instance?.Configuration;
+                if (config == null || !config.EnableFingerprintCache)
+                {
+                    return null;
+                }
+                
+                var cacheDir = GetSeasonCacheDirectory(episode);
+                var cacheFile = Path.Combine(cacheDir, "season-intro.json");
+                
+                _logger.LogInformation("🔍 Checking season intro cache: {CacheFile}", cacheFile);
+                
+                if (!File.Exists(cacheFile))
+                {
+                    _logger.LogInformation("📂 Cache file not found: {CacheFile}", cacheFile);
+                    return null;
+                }
+                
+                var json = await File.ReadAllTextAsync(cacheFile, cancellationToken);
+                var cached = JsonSerializer.Deserialize<SeasonIntroCache>(json);
+                
+                if (cached == null)
+                {
+                    _logger.LogWarning("⚠️ Cache file exists but is invalid: {CacheFile}", cacheFile);
+                    return null;
+                }
+                
+                _logger.LogInformation("✅ Loaded season intro cache from: {CacheFile}", cacheFile);
+                
+                return new IntroDetectionResult
+                {
+                    ItemId = episode.Id,
+                    HasIntro = cached.HasIntro,
+                    IntroStart = TimeSpan.FromSeconds(cached.IntroStartSeconds),
+                    IntroEnd = TimeSpan.FromSeconds(cached.IntroEndSeconds),
+                    Confidence = cached.Confidence
+                };
             }
-            
-            var mediaInfoJsonPath = !string.IsNullOrEmpty(jsonRootFolder)
-                ? Path.Combine(jsonRootFolder, relativePath, item.FileNameWithoutExtension + MediaInfoFileExtension)
-                : Path.Combine(item.ContainingFolderPath!, item.FileNameWithoutExtension + MediaInfoFileExtension);
-            
-            return mediaInfoJsonPath;
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to load season intro cache for {EpisodeName}", episode.Name);
+                return null;
+            }
         }
         
         /// <summary>
-        /// 媒体源与章节信息（用于 JSON 序列化）
+        /// 保存季度片头缓存（只缓存成功的检测结果）
         /// </summary>
-        private class MediaSourceWithChapters
+        private async Task SaveSeasonIntroCacheAsync(Episode episode, IntroDetectionResult result, CancellationToken cancellationToken)
         {
-            public MediaSourceInfo MediaSourceInfo { get; set; }
-            public List<ChapterInfo> Chapters { get; set; } = new List<ChapterInfo>();
-            public bool? ZeroFingerprintConfidence { get; set; }
-            public string EmbeddedImage { get; set; }
+            try
+            {
+                var config = JellyfinPlugin.Instance?.Configuration;
+                if (config == null || !config.EnableFingerprintCache)
+                {
+                    _logger.LogDebug("Fingerprint cache is disabled, skipping season cache save");
+                    return;
+                }
+                
+                // 🔥 关键修复：只缓存成功的检测结果
+                if (!result.HasIntro)
+                {
+                    _logger.LogInformation("❌ No intro detected, not saving to season cache (will retry next time)");
+                    return;
+                }
+                
+                var cacheDir = GetSeasonCacheDirectory(episode);
+                Directory.CreateDirectory(cacheDir);
+                
+                var cacheFile = Path.Combine(cacheDir, "season-intro.json");
+                
+                _logger.LogInformation("💾 Saving season intro cache to: {CacheFile}", cacheFile);
+                
+                var cache = new SeasonIntroCache
+                {
+                    SeriesName = episode.SeriesName,
+                    SeasonNumber = episode.ParentIndexNumber ?? 0,
+                    HasIntro = result.HasIntro,
+                    IntroStartSeconds = result.IntroStart.TotalSeconds,
+                    IntroEndSeconds = result.IntroEnd.TotalSeconds,
+                    Confidence = result.Confidence,
+                    DetectedAt = DateTime.UtcNow
+                };
+                
+                var json = JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true });
+                await File.WriteAllTextAsync(cacheFile, json, cancellationToken);
+                
+                _logger.LogInformation("✅ Saved season intro cache to {CacheFile} (Start: {Start}, End: {End})", 
+                    cacheFile, 
+                    TimeSpan.FromSeconds(cache.IntroStartSeconds),
+                    TimeSpan.FromSeconds(cache.IntroEndSeconds));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to save season intro cache for {EpisodeName}", episode.Name);
+            }
+        }
+        
+        /// <summary>
+        /// 获取季度缓存目录
+        /// </summary>
+        private string GetSeasonCacheDirectory(Episode episode)
+        {
+            var config = JellyfinPlugin.Instance?.Configuration;
+            var rootFolder = config?.MediaInfoJsonRootFolder;
+            
+            if (string.IsNullOrEmpty(rootFolder))
+            {
+                rootFolder = episode.ContainingFolderPath;
+            }
+            
+            var seasonFolder = $"{episode.SeriesName?.Replace("/", "_").Replace("\\", "_")} - Season {episode.ParentIndexNumber ?? 0}";
+            return Path.Combine(rootFolder, ".intro-cache", seasonFolder);
+        }
+        
+        /// <summary>
+        /// 季度片头缓存
+        /// </summary>
+        private class SeasonIntroCache
+        {
+            public string SeriesName { get; set; }
+            public int SeasonNumber { get; set; }
+            public bool HasIntro { get; set; }
+            public double IntroStartSeconds { get; set; }
+            public double IntroEndSeconds { get; set; }
+            public double Confidence { get; set; }
+            public DateTime DetectedAt { get; set; }
         }
     }
     
@@ -549,6 +712,7 @@ namespace StrmAssistant.Jellyfin.Services
         public bool HasIntro { get; set; }
         public TimeSpan IntroStart { get; set; }
         public TimeSpan IntroEnd { get; set; }
-        public double Confidence { get; set; }
+        public double Confidence { get; set; } = 1.0;
     }
 }
+

@@ -189,6 +189,7 @@ namespace StrmAssistant.Jellyfin
             
             // 注册服务
             serviceCollection.AddSingleton<MediaInfoService>();
+            serviceCollection.AddSingleton<ChromaprintService>();
             serviceCollection.AddSingleton<IntroDetectionService>();
             serviceCollection.AddSingleton<MergeVersionService>();
             serviceCollection.AddSingleton<SubtitleScanService>();

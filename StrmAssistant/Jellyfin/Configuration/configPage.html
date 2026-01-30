@@ -89,6 +89,38 @@
                             <strong>注意：</strong>此设置同时影响媒体信息提取和字幕扫描任务的并发数。过高的并发数可能导致磁盘 I/O 瓶颈或 CPU 占用过高。
                         </div>
                     </div>
+                    
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="introDetectionConcurrency">
+                            片头检测并发数
+                        </label>
+                        <input type="number" id="introDetectionConcurrency" is="emby-input" class="emby-input" min="1" max="5" step="1" />
+                        <div class="fieldDescription">
+                            控制同时处理的剧集数量（范围：1-5）<br/>
+                            <strong>默认值：</strong>2<br/>
+                            <strong>注意：</strong>对于流媒体 URL（.strm 文件），过高的并发数可能导致网络拥堵或带宽不足。建议使用默认值。
+                        </div>
+                    </div>
+                    
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="introFingerprintDurationMinutes">
+                            指纹提取时长（分钟）
+                        </label>
+                        <input type="number" id="introFingerprintDurationMinutes" is="emby-input" class="emby-input" min="1" max="10" step="1" />
+                        <div class="fieldDescription">
+                            从视频开头提取多长时间的音频用于指纹分析（范围：1-10 分钟）<br/>
+                            <strong>默认值：</strong>5 分钟<br/>
+                            <strong>注意：</strong>时长越长，检测精度越高，但处理时间也越长。
+                        </div>
+                    </div>
+                    
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input type="checkbox" id="enableFingerprintCache" is="emby-checkbox" />
+                            <span>启用指纹缓存</span>
+                        </label>
+                        <div class="fieldDescription">缓存已提取的指纹，避免重复处理。强烈建议开启以提升性能。</div>
+                    </div>
                 </div>
 
                 <div class="verticalSection">
@@ -185,6 +217,9 @@
                     document.querySelector('#mediaInfoJsonRootFolder').value = config.MediaInfoJsonRootFolder || '';
                     document.querySelector('#forceReExtractMediaInfo').checked = config.ForceReExtractMediaInfo === true;
                     document.querySelector('#mediaInfoConcurrency').value = config.MediaInfoConcurrency || 2;
+                    document.querySelector('#introDetectionConcurrency').value = config.IntroDetectionConcurrency || 2;
+                    document.querySelector('#introFingerprintDurationMinutes').value = config.IntroFingerprintDurationMinutes || 5;
+                    document.querySelector('#enableFingerprintCache').checked = config.EnableFingerprintCache !== false;
                     Dashboard.hideLoadingMsg();
                 });
             });
@@ -206,6 +241,11 @@
                     config.ForceReExtractMediaInfo = document.querySelector('#forceReExtractMediaInfo').checked;
                     var concurrencyValue = parseInt(document.querySelector('#mediaInfoConcurrency').value) || 2;
                     config.MediaInfoConcurrency = Math.max(1, Math.min(10, concurrencyValue)); // 限制在 1-10 范围内
+                    var introDetectionConcurrencyValue = parseInt(document.querySelector('#introDetectionConcurrency').value) || 2;
+                    config.IntroDetectionConcurrency = Math.max(1, Math.min(5, introDetectionConcurrencyValue)); // 限制在 1-5 范围内
+                    var introFingerprintDurationValue = parseInt(document.querySelector('#introFingerprintDurationMinutes').value) || 5;
+                    config.IntroFingerprintDurationMinutes = Math.max(1, Math.min(10, introFingerprintDurationValue)); // 限制在 1-10 范围内
+                    config.EnableFingerprintCache = document.querySelector('#enableFingerprintCache').checked;
                     
                     ApiClient.updatePluginConfiguration(StrmAssistantConfig.pluginUniqueId, config).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
