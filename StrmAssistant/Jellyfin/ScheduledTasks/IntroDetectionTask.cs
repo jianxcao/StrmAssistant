@@ -104,12 +104,14 @@ namespace StrmAssistant.Jellyfin.ScheduledTasks
         
         public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
         {
-            // 在媒体库扫描完成后自动运行
+            // 每天凌晨 3 点自动运行
+            // 注意：Jellyfin 不支持库扫描后触发，所以使用每日定时触发
             return new[]
             {
                 new TaskTriggerInfo
                 {
-                    Type = TaskTriggerInfo.TriggerLibraryScan
+                    Type = TaskTriggerInfo.TriggerDaily,
+                    TimeOfDayTicks = TimeSpan.FromHours(3).Ticks
                 }
             };
         }

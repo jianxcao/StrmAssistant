@@ -113,8 +113,15 @@ namespace StrmAssistant.Jellyfin.Services
         /// <summary>
         /// 检查是否需要提取媒体信息
         /// </summary>
-        public bool NeedsExtraction(BaseItem item)
+        public bool NeedsExtraction(BaseItem item, bool forceReExtract = false)
         {
+            // 如果强制重新提取，直接返回 true
+            if (forceReExtract)
+            {
+                _logger.LogDebug("Force re-extract enabled for {ItemName}", item.Name);
+                return true;
+            }
+            
             var streams = item.GetMediaStreams();
             
             // 如果没有媒体流信息，则需要提取

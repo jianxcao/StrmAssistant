@@ -52,13 +52,13 @@ namespace StrmAssistant.Jellyfin.ScheduledTasks
         
         public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
         {
-            // 默认在媒体库扫描后执行
+            // 每天凌晨 2 点自动运行
             return new[]
             {
                 new TaskTriggerInfo
                 {
-                    Type = TaskTriggerInfo.TriggerInterval,
-                    IntervalTicks = TimeSpan.FromHours(24).Ticks
+                    Type = TaskTriggerInfo.TriggerDaily,
+                    TimeOfDayTicks = TimeSpan.FromHours(2).Ticks
                 }
             };
         }

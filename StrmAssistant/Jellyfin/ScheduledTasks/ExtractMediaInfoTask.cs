@@ -46,6 +46,15 @@ namespace StrmAssistant.Jellyfin.ScheduledTasks
             
             try
             {
+                // 检查是否强制重新提取
+                var config = Jellyfin.JellyfinPlugin.Instance?.Configuration;
+                var forceReExtract = config?.ForceReExtractMediaInfo ?? false;
+                
+                if (forceReExtract)
+                {
+                    _logger.LogWarning("Force re-extract mode enabled - will process ALL items");
+                }
+                
                 // 获取所有需要提取媒体信息的视频项
                 var query = new InternalItemsQuery
                 {
@@ -55,12 +64,21 @@ namespace StrmAssistant.Jellyfin.ScheduledTasks
                 };
                 
                 var items = await _libraryManager.GetItemsAsync(query, cancellationToken);
-                var itemsNeedingExtraction = items.Where(item => _mediaInfoService.NeedsExtraction(item)).ToList();
+                var itemsNeedingExtraction = items.Where(item => _mediaInfoService.NeedsExtraction(item, forceReExtract)).ToList();
                 
-                _logger.LogInformation("Found {Count} items needing media info extraction", itemsNeedingExtraction.Count);
+                _logger.LogInformation("Found {Count} items needing media info extraction (Force: {Force})", 
+                    itemsNeedingExtraction.Count, forceReExtract);
                 
                 // 批量提取媒体信息
                 await _mediaInfoService.BatchExtractMediaInfoAsync(itemsNeedingExtraction, progress, cancellationToken);
+                
+                // 如果是强制重新提取模式，执行完后自动关闭
+                if (forceReExtract && config != null)
+                {
+                    config.ForceReExtractMediaInfo = false;
+                    Jellyfin.JellyfinPlugin.Instance?.SaveConfiguration();
+                    _logger.LogInformation("Force re-extract mode has been disabled automatically");
+                }
                 
                 _logger.LogInformation("Media info extraction completed");
             }
@@ -73,12 +91,14 @@ namespace StrmAssistant.Jellyfin.ScheduledTasks
         
         public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
         {
-            // 在媒体库扫描完成后自动运行
+            // 每小时自动检查一次新媒体
+            // 注意：Jellyfin 不支持库扫描后触发，所以使用定时触发
             return new[]
             {
                 new TaskTriggerInfo
                 {
-                    Type = TaskTriggerInfo.TriggerLibraryScan
+                    Type = TaskTriggerInfo.TriggerInterval,
+                    IntervalTicks = TimeSpan.FromHours(1).Ticks
                 }
             };
         }

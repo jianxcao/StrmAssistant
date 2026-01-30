@@ -92,11 +92,30 @@
                             → JSON 文件保存为 <code>/backup/mediainfo/media/movies/Movie-mediainfo.json</code>
                         </div>
                     </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input type="checkbox" id="forceReExtractMediaInfo" is="emby-checkbox" />
+                            <span>⚠️ 强制重新提取所有媒体信息</span>
+                        </label>
+                        <div class="fieldDescription">
+                            <strong style="color: #ff6b6b;">注意：</strong>启用后，下次运行"提取媒体信息"任务时，会重新提取<strong>所有</strong>媒体的信息（忽略已有信息）。<br/>
+                            任务执行完成后，此选项会自动关闭。<br/>
+                            <br/>
+                            <strong>适用场景：</strong>
+                            <ul style="margin: 5px 0; padding-left: 20px;">
+                                <li>媒体文件被替换或更新</li>
+                                <li>之前提取的信息不完整或错误</li>
+                                <li>FFProbe 版本更新后重新扫描</li>
+                                <li>需要修复数据库中的媒体信息</li>
+                            </ul>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="verticalSection">
                     <h2>📋 系统信息</h2>
-                    <p><strong>插件版本:</strong> 3.0.0</p>
+                    <p><strong>插件版本:</strong> 0.0.4</p>
                     <p><strong>目标 Jellyfin 版本:</strong> 10.10.0+</p>
                     <p><strong>框架:</strong> .NET 8.0</p>
                 </div>
@@ -138,6 +157,7 @@
                     document.querySelector('#debugMode').checked = config.DebugMode === true;
                     document.querySelector('#enableMediaInfoPersistence').checked = config.EnableMediaInfoPersistence === true;
                     document.querySelector('#mediaInfoJsonRootFolder').value = config.MediaInfoJsonRootFolder || '';
+                    document.querySelector('#forceReExtractMediaInfo').checked = config.ForceReExtractMediaInfo === true;
                     Dashboard.hideLoadingMsg();
                 });
             });
@@ -155,6 +175,7 @@
                     config.DebugMode = document.querySelector('#debugMode').checked;
                     config.EnableMediaInfoPersistence = document.querySelector('#enableMediaInfoPersistence').checked;
                     config.MediaInfoJsonRootFolder = document.querySelector('#mediaInfoJsonRootFolder').value;
+                    config.ForceReExtractMediaInfo = document.querySelector('#forceReExtractMediaInfo').checked;
                     
                     ApiClient.updatePluginConfiguration(StrmAssistantConfig.pluginUniqueId, config).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);

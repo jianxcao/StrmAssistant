@@ -64,5 +64,11 @@ namespace StrmAssistant.Jellyfin
         /// 设置后，JSON 文件将保存在此根目录下，保持与媒体文件相同的相对路径结构
         /// </summary>
         public string MediaInfoJsonRootFolder { get; set; } = string.Empty;
+        
+        /// <summary>
+        /// 强制重新提取所有媒体信息
+        /// 启用后，即使已有媒体信息也会重新提取（下次任务执行后自动关闭）
+        /// </summary>
+        public bool ForceReExtractMediaInfo { get; set; } = false;
     }
 }

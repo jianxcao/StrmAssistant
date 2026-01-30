@@ -28,25 +28,25 @@ namespace StrmAssistant.Jellyfin.Adapters
         /// <summary>
         /// 获取所有媒体项
         /// </summary>
-        public async Task<List<BaseItem>> GetItemsAsync(InternalItemsQuery query, CancellationToken cancellationToken = default)
+        public Task<List<BaseItem>> GetItemsAsync(InternalItemsQuery query, CancellationToken cancellationToken = default)
         {
             try
             {
                 // Jellyfin 10.11+ GetItemList 返回 IReadOnlyList<BaseItem>
                 var result = _libraryManager.GetItemList(query);
-                return result != null ? new List<BaseItem>(result) : new List<BaseItem>();
+                return Task.FromResult(result?.ToList() ?? new List<BaseItem>());
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to get items");
-                return new List<BaseItem>();
+                return Task.FromResult(new List<BaseItem>());
             }
         }
         
         /// <summary>
         /// 合并多个版本到主项
         /// </summary>
-        public async Task<bool> MergeItemsAsync(Guid primaryId, Guid[] alternativeIds, CancellationToken cancellationToken = default)
+        public Task<bool> MergeItemsAsync(Guid primaryId, Guid[] alternativeIds, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -64,12 +64,12 @@ namespace StrmAssistant.Jellyfin.Adapters
                     }
                 }
                 
-                return true;
+                return Task.FromResult(true);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to merge items");
-                return false;
+                return Task.FromResult(false);
             }
         }
         
